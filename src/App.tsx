@@ -11,6 +11,7 @@ import TransactionsPage from './pages/Transactions/TransactionsPage';
 import WebhooksPage from './pages/Webhooks/WebhooksPage';
 import WalletsPage from './pages/Wallets/WalletsPage';
 import EnterprisePage from './pages/Enterprise/EnterprisePage';
+import CustomersPage from './pages/Customers/CustomersPage';
 import PlansPage from './pages/Plans/PlansPage';
 import FeaturesPage from './pages/Features/FeaturesPage';
 import XpPacksPage from './pages/XpPacks/XpPacksPage';
@@ -45,6 +46,7 @@ export default function App() {
               <Route path="webhooks"  element={<WebhooksPage />} />
               <Route path="wallets"   element={<WalletsPage />} />
               <Route path="enterprise" element={<EnterprisePage />} />
+              <Route path="customers"  element={<CustomersPage />} />
               <Route path="plans"     element={<PlansPage />} />
               <Route path="features"  element={<FeaturesPage />} />
               <Route path="xp-packs"  element={<XpPacksPage />} />

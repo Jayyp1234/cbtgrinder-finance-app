@@ -10,6 +10,7 @@ const TITLES: Record<string, { title: string; crumb: string }> = {
   '/transactions':  { title: 'Transactions',        crumb: 'Transactions' },
   '/webhooks':      { title: 'Webhook Events',      crumb: 'Webhook Events' },
   '/wallets':       { title: 'Wallet Operations',   crumb: 'Wallets' },
+  '/customers':     { title: 'Enterprise Customers', crumb: 'Customers' },
   '/enterprise':    { title: 'Enterprise Billing',  crumb: 'Enterprise' },
   '/plans':         { title: 'Plans & Pricing',     crumb: 'Plans' },
   '/features':      { title: 'Feature Catalog',     crumb: 'Features' },

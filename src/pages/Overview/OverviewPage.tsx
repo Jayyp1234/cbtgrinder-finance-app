@@ -1,15 +1,18 @@
 import { useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
+import { useNavigate } from 'react-router-dom';
 import {
   Banknote, TrendingUp, Wallet, Building2, ArrowUpRight, Loader2, Calendar,
+  Search, Play, Plus, Receipt,
 } from 'lucide-react';
 import {
   ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip,
   PieChart, Pie, Cell, Legend,
 } from 'recharts';
+import toast from 'react-hot-toast';
 import Card, { StatCard } from '../../components/ui/Card';
 import { useListTransactionsQuery } from '../../store/api/paymentsApi';
-import { useListInvoicesQuery } from '../../store/api/enterpriseApi';
+import { useListInvoicesQuery, useRunBillingMutation } from '../../store/api/enterpriseApi';
 
 /**
  * Overview — the CEO's #24 from the PDF:
@@ -24,7 +27,25 @@ import { useListInvoicesQuery } from '../../store/api/enterpriseApi';
 type Period = '30d' | '90d' | 'all';
 
 export default function OverviewPage() {
+  const navigate = useNavigate();
   const [period, setPeriod] = useState<Period>('30d');
+  const [runBilling, { isLoading: running }] = useRunBillingMutation();
+
+  const handleRunBilling = async () => {
+    if (!window.confirm('Run the monthly billing engine NOW? Generates invoices for any school whose period ended.')) return;
+    try {
+      const r = await runBilling({}).unwrap();
+      if (r.errors.length > 0) {
+        toast.error(`${r.invoices_created} invoices created, ${r.errors.length} errors.`);
+      } else if (r.invoices_created === 0) {
+        toast(`Processed ${r.processed} subscriptions — none were due.`, { icon: '✓' });
+      } else {
+        toast.success(`Generated ${r.invoices_created} invoices · ₦${(r.total_kobo / 100).toLocaleString()}.`);
+      }
+    } catch (e: any) {
+      toast.error(e?.data?.message || 'Run failed');
+    }
+  };
 
   // Pull a large batch of successful payments and aggregate client-side.
   // For production scale we'd add a server-side aggregation endpoint, but
@@ -123,6 +144,22 @@ export default function OverviewPage() {
           ))}
         </div>
       </div>
+
+      {/* Quick actions */}
+      <Card className="p-4">
+        <div className="flex items-center justify-between flex-wrap gap-3">
+          <div>
+            <h2 className="text-sm font-bold text-gray-900 dark:text-white">Quick actions</h2>
+            <p className="text-xs text-gray-500 dark:text-gray-400">Most common operations one tap away.</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <QuickAction onClick={() => navigate('/diagnostics')} icon={Search}  tone="rose"    label="Look up payment" />
+            <QuickAction onClick={() => navigate('/diagnostics')} icon={Plus}    tone="emerald" label="Issue manual credit" />
+            <QuickAction onClick={handleRunBilling} disabled={running} icon={Play} tone="purple" label={running ? 'Running…' : 'Run billing now'} />
+            <QuickAction onClick={() => navigate('/transactions')} icon={Receipt} tone="blue"   label="View transactions" />
+          </div>
+        </div>
+      </Card>
 
       {/* Headline stats */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -270,5 +307,33 @@ function EmptyChart({ label }: { label: string }) {
     <div className="h-44 flex items-center justify-center text-sm text-gray-500 dark:text-gray-400">
       {label}
     </div>
+  );
+}
+
+function QuickAction({
+  onClick, icon: Icon, tone, label, disabled,
+}: {
+  onClick: () => void;
+  icon: any;
+  tone: 'emerald' | 'rose' | 'purple' | 'blue';
+  label: string;
+  disabled?: boolean;
+}) {
+  const tones: Record<string, string> = {
+    emerald: 'from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700',
+    rose:    'from-rose-500 to-red-600 hover:from-rose-600 hover:to-red-700',
+    purple:  'from-purple-500 to-pink-600 hover:from-purple-600 hover:to-pink-700',
+    blue:    'from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700',
+  };
+  return (
+    <motion.button
+      onClick={onClick}
+      disabled={disabled}
+      className={`px-3 py-2 bg-gradient-to-r ${tones[tone]} text-white font-semibold rounded-lg text-xs flex items-center gap-1.5 shadow disabled:opacity-50 disabled:cursor-not-allowed`}
+      whileHover={disabled ? undefined : { scale: 1.02 }}
+      whileTap={disabled ? undefined : { scale: 0.98 }}
+    >
+      <Icon className="w-3.5 h-3.5" /> {label}
+    </motion.button>
   );
 }

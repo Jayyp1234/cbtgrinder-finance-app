@@ -61,9 +61,39 @@ export interface UpsertPlanRequest {
   price_ngn?: number;
   period?: string;
   description?: string;
+  tagline?: string | null;
   is_popular?: boolean;
   is_active?: boolean;
   sort_order?: number;
+}
+
+export interface RefundPreviewRow {
+  subscription_id: number;
+  user_id: number;
+  email: string;
+  name: string;
+  last_payment_id: number | null;
+  refund_kobo: number;
+  refund_ngn: number;
+  refund_display: string;
+}
+
+export interface RefundPreview {
+  plan: PlanRow;
+  users_count: number;
+  users_with_refund: number;
+  total_refund_kobo: number;
+  total_refund_ngn: number;
+  total_refund_display: string;
+  sample: RefundPreviewRow[];
+}
+
+export interface DeleteWithRefundResult {
+  message: string;
+  refunded_users: number;
+  total_credited_kobo: number;
+  total_credited_ngn: number;
+  errors: string[];
 }
 
 const BASE = `${API_HOST}/api/admin/plans`;
@@ -126,6 +156,21 @@ export const plansApi = createApi({
       transformResponse: (res: any) => res?.data ?? res,
       invalidatesTags: ['Plans'],
     }),
+
+    // ─── Refund + archive ───
+    getRefundPreview: b.query<RefundPreview, number>({
+      query: (id) => ({ url: `/${id}/refund-preview`, method: 'GET' }),
+      transformResponse: (res: any) => res?.data ?? res,
+    }),
+    deletePlanWithRefund: b.mutation<DeleteWithRefundResult, { id: number; reason: string }>({
+      query: ({ id, reason }) => ({
+        url: `/${id}/delete-with-refund`,
+        method: 'POST',
+        body: { reason },
+      }),
+      transformResponse: (res: any) => res?.data ?? res,
+      invalidatesTags: ['Plans'],
+    }),
   }),
 });
 
@@ -137,4 +182,6 @@ export const {
   useCreatePlanPriceMutation,
   useUpdatePlanPriceMutation,
   useDeletePlanPriceMutation,
+  useGetRefundPreviewQuery,
+  useDeletePlanWithRefundMutation,
 } = plansApi;

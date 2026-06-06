@@ -2,19 +2,23 @@ import { useState } from 'react';
 import { motion } from 'framer-motion';
 import {
   Building2, Loader2, Receipt, Calendar, CheckCircle2, X,
-  Play, AlertCircle, ExternalLink, Users, TrendingUp,
+  Play, AlertCircle, ExternalLink, Users, TrendingUp, Download,
+  Banknote, ShieldCheck,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import Card, { StatCard } from '../../components/ui/Card';
+import { downloadCsv, csvTimestamp } from '../../utils/csv';
 import {
   useListInvoicesQuery,
   useGetInvoiceQuery,
   useMarkInvoicePaidMutation,
   useCancelInvoiceMutation,
+  useClearBankRefundMutation,
   useRunBillingMutation,
   useListEnterprisePlansQuery,
   useListSubscriptionsQuery,
   type AdminSubscriptionRow,
+  type EnterpriseInvoice,
 } from '../../store/api/enterpriseApi';
 
 type Tab = 'invoices' | 'subscriptions';
@@ -24,10 +28,19 @@ export default function EnterprisePage() {
   const [statusFilter, setStatusFilter] = useState('');
   const [search, setSearch] = useState('');
   const [openId, setOpenId] = useState<number | null>(null);
+  const [bankRefundOnly, setBankRefundOnly] = useState(false);
+  const [clearingInvoice, setClearingInvoice] = useState<EnterpriseInvoice | null>(null);
+
+  // Separate query just for the bank-refund badge count — so the badge stays
+  // accurate even when the user is filtered to another status.
+  const { data: bankRefundData } = useListInvoicesQuery({ bank_refund_required: true, limit: 200 });
+  const bankRefundCount = bankRefundData?.invoices?.length ?? 0;
+  const bankRefundTotalNgn = (bankRefundData?.invoices ?? []).reduce((acc, i) => acc + i.total_ngn, 0);
 
   const { data: invoicesData, isLoading: invLoading, refetch } = useListInvoicesQuery({
     status: statusFilter || undefined,
     search: search || undefined,
+    bank_refund_required: bankRefundOnly || undefined,
     limit: 50,
   });
   useListEnterprisePlansQuery(); // prefetch plan catalogue (used elsewhere)
@@ -97,6 +110,49 @@ export default function EnterprisePage() {
       </Card>
 
       {tab === 'invoices' && <>
+      {/* Bank-refund queue banner (only when there are pending) */}
+      {bankRefundCount > 0 && !bankRefundOnly && (
+        <Card className="p-4 bg-gradient-to-br from-amber-50 to-orange-50 dark:from-amber-900/20 dark:to-orange-900/20 border-amber-200 dark:border-amber-800">
+          <div className="flex items-start justify-between gap-3 flex-wrap">
+            <div className="flex items-start gap-3">
+              <div className="p-2 bg-amber-100 dark:bg-amber-900/30 rounded-lg flex-shrink-0">
+                <Banknote className="w-5 h-5 text-amber-700 dark:text-amber-400" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-amber-900 dark:text-amber-200">
+                  {bankRefundCount} bank refund{bankRefundCount === 1 ? '' : 's'} pending — ₦{bankRefundTotalNgn.toLocaleString()} owed to schools
+                </h3>
+                <p className="text-xs text-amber-800 dark:text-amber-300 mt-0.5 max-w-2xl">
+                  These invoices were paid by schools (not parents) and refunded during a plan archive. Process the payouts in BudPay/Paystack's dashboard, then click <strong>Mark refunded</strong> on each row to clear the flag.
+                </p>
+              </div>
+            </div>
+            <motion.button
+              onClick={() => setBankRefundOnly(true)}
+              className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-semibold rounded-lg text-xs flex items-center gap-1.5 shadow"
+              whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}
+            >
+              <Banknote className="w-3.5 h-3.5" /> Open queue
+            </motion.button>
+          </div>
+        </Card>
+      )}
+
+      {bankRefundOnly && (
+        <Card className="p-3 bg-amber-50/60 dark:bg-amber-900/10 border-amber-200 dark:border-amber-800 flex items-center justify-between flex-wrap gap-3">
+          <div className="flex items-center gap-2 text-sm text-amber-800 dark:text-amber-300">
+            <Banknote className="w-4 h-4" />
+            <strong>Filtered:</strong> showing {bankRefundCount} invoice{bankRefundCount === 1 ? '' : 's'} needing bank refund (₦{bankRefundTotalNgn.toLocaleString()}).
+          </div>
+          <button
+            onClick={() => setBankRefundOnly(false)}
+            className="text-xs font-semibold text-amber-700 dark:text-amber-400 hover:text-amber-900 flex items-center gap-1"
+          >
+            <X className="w-3 h-3" /> Clear filter
+          </button>
+        </Card>
+      )}
+
       {/* Run cron */}
       <Card className="p-5 bg-gradient-to-br from-emerald-50 to-teal-50 dark:from-emerald-900/20 dark:to-teal-900/20 border-emerald-200 dark:border-emerald-800">
         <div className="flex items-start justify-between flex-wrap gap-3">
@@ -128,7 +184,7 @@ export default function EnterprisePage() {
             <h2 className="text-base font-bold text-gray-900 dark:text-white">Invoices</h2>
             {invLoading && <Loader2 className="w-4 h-4 animate-spin text-emerald-600" />}
           </div>
-          <div className="flex gap-2">
+          <div className="flex gap-2 flex-wrap">
             <input
               type="text"
               placeholder="Search by school or invoice number"
@@ -148,6 +204,35 @@ export default function EnterprisePage() {
               <option value="failed">Failed</option>
               <option value="cancelled">Cancelled</option>
             </select>
+            <motion.button
+              onClick={() => {
+                const rows = invoices;
+                if (rows.length === 0) { toast.error('No invoices in current view to export.'); return; }
+                downloadCsv(
+                  `invoices-${csvTimestamp()}.csv`,
+                  [
+                    { header: 'invoice_number', accessor: (r) => r.invoice_number },
+                    { header: 'enterprise',     accessor: (r) => r.enterprise_name ?? r.enterprise_id },
+                    { header: 'billing_owner',  accessor: (r) => r.billing_owner },
+                    { header: 'period_start',   accessor: (r) => r.period_start },
+                    { header: 'period_end',     accessor: (r) => r.period_end },
+                    { header: 'status',         accessor: (r) => r.status },
+                    { header: 'total_kobo',     accessor: (r) => r.total_kobo },
+                    { header: 'total_ngn',      accessor: (r) => r.total_ngn },
+                    { header: 'due_at',         accessor: (r) => r.due_at ?? '' },
+                    { header: 'paid_at',        accessor: (r) => r.paid_at ?? '' },
+                    { header: 'attempts',       accessor: (r) => r.attempts },
+                    { header: 'created_at',     accessor: (r) => r.created_at ?? '' },
+                  ],
+                  rows,
+                );
+                toast.success(`Exported ${rows.length} invoices.`);
+              }}
+              className="px-3 py-1.5 bg-gradient-to-r from-emerald-500 to-teal-600 text-white font-semibold rounded-lg text-xs flex items-center gap-1.5 shadow"
+              whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}
+            >
+              <Download className="w-3.5 h-3.5" /> Export CSV
+            </motion.button>
           </div>
         </div>
 
@@ -174,9 +259,18 @@ export default function EnterprisePage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
-                {invoices.map((inv) => (
-                  <tr key={inv.id} className="hover:bg-gray-50 dark:hover:bg-gray-800/50">
-                    <td className="px-4 py-3"><code className="text-xs font-mono">{inv.invoice_number}</code></td>
+                {invoices.map((inv) => {
+                  const needsBankRefund = !!(inv.metadata as any)?.bank_refund_required;
+                  return (
+                  <tr key={inv.id} className={`hover:bg-gray-50 dark:hover:bg-gray-800/50 ${needsBankRefund ? 'bg-amber-50/30 dark:bg-amber-900/10' : ''}`}>
+                    <td className="px-4 py-3">
+                      <code className="text-xs font-mono">{inv.invoice_number}</code>
+                      {needsBankRefund && (
+                        <span className="ml-1 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wide bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 align-middle">
+                          <Banknote className="w-2.5 h-2.5" /> Bank
+                        </span>
+                      )}
+                    </td>
                     <td className="px-4 py-3 text-gray-900 dark:text-white">{inv.enterprise_name ?? `#${inv.enterprise_id}`}</td>
                     <td className="px-4 py-3 text-xs text-gray-500 dark:text-gray-400">{inv.period_start} → {inv.period_end}</td>
                     <td className="px-4 py-3">
@@ -187,12 +281,24 @@ export default function EnterprisePage() {
                     <td className="px-4 py-3"><InvoiceStatusPill status={inv.status} /></td>
                     <td className="px-4 py-3 text-right font-bold tabular-nums text-gray-900 dark:text-white">{inv.total_display}</td>
                     <td className="px-4 py-3 text-right">
-                      <button onClick={() => setOpenId(inv.id)} className="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700">
-                        <ExternalLink className="w-4 h-4 text-gray-600 dark:text-gray-300" />
-                      </button>
+                      <div className="flex gap-1 justify-end">
+                        {needsBankRefund && (
+                          <button
+                            onClick={() => setClearingInvoice(inv)}
+                            title="Mark refunded outside the app (after processing payout via gateway dashboard)"
+                            className="p-1.5 rounded-lg hover:bg-emerald-50 dark:hover:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400"
+                          >
+                            <ShieldCheck className="w-4 h-4" />
+                          </button>
+                        )}
+                        <button onClick={() => setOpenId(inv.id)} className="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700">
+                          <ExternalLink className="w-4 h-4 text-gray-600 dark:text-gray-300" />
+                        </button>
+                      </div>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -216,6 +322,96 @@ export default function EnterprisePage() {
       )}
 
       {openId !== null && <InvoiceDetailModal id={openId} onClose={() => setOpenId(null)} />}
+      {clearingInvoice && (
+        <ClearBankRefundModal invoice={clearingInvoice} onClose={() => setClearingInvoice(null)} />
+      )}
+    </div>
+  );
+}
+
+function ClearBankRefundModal({
+  invoice, onClose,
+}: { invoice: EnterpriseInvoice; onClose: () => void }) {
+  const [clear, { isLoading }] = useClearBankRefundMutation();
+  const [paidRef, setPaidRef] = useState('');
+  const [note, setNote] = useState('');
+
+  const submit = async () => {
+    try {
+      const r = await clear({
+        id: invoice.id,
+        paid_reference: paidRef.trim() || undefined,
+        note: note.trim() || undefined,
+      }).unwrap();
+      toast.success(r.message);
+      onClose();
+    } catch (e: any) {
+      toast.error(e?.data?.message || 'Failed to clear flag');
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40" onClick={onClose}>
+      <motion.div
+        initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}
+        className="bg-white dark:bg-gray-800 rounded-2xl max-w-lg w-full max-h-[90vh] overflow-y-auto shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="bg-gradient-to-br from-emerald-600 via-teal-600 to-cyan-700 text-white p-5">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-bold">Confirm bank refund processed</h2>
+              <p className="text-sm text-white/85 mt-1">
+                Mark this invoice as no-longer-pending in our queue. You should have already issued the payout via the BudPay/Paystack merchant dashboard.
+              </p>
+            </div>
+            <button onClick={onClose} className="p-1 rounded hover:bg-white/20">
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+        </div>
+        <div className="p-5 space-y-3">
+          <div className="p-3 bg-gray-50 dark:bg-gray-700/40 rounded-lg text-sm">
+            <div className="flex items-baseline justify-between">
+              <code className="text-xs font-mono text-gray-700 dark:text-gray-300">{invoice.invoice_number}</code>
+              <span className="font-bold tabular-nums text-gray-900 dark:text-white">{invoice.total_display}</span>
+            </div>
+            <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+              {invoice.enterprise_name ?? `Enterprise #${invoice.enterprise_id}`}
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-bold uppercase tracking-wide text-gray-700 dark:text-gray-300 mb-1">
+              Gateway payout reference (optional)
+            </label>
+            <input type="text" value={paidRef} onChange={(e) => setPaidRef(e.target.value)}
+              placeholder="e.g. budpay-payout-2026-05-19"
+              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm font-mono bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100" />
+          </div>
+          <div>
+            <label className="block text-xs font-bold uppercase tracking-wide text-gray-700 dark:text-gray-300 mb-1">
+              Note (optional)
+            </label>
+            <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2}
+              placeholder="Any context worth preserving on the audit log"
+              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100" />
+          </div>
+        </div>
+        <div className="p-5 border-t border-gray-200 dark:border-gray-700 flex gap-2 justify-end">
+          <button onClick={onClose}
+            className="px-4 py-2 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 font-semibold rounded-lg text-sm">
+            Cancel
+          </button>
+          <motion.button onClick={submit} disabled={isLoading}
+            className="px-4 py-2 bg-gradient-to-r from-emerald-500 to-teal-600 text-white font-semibold rounded-lg text-sm flex items-center gap-2 shadow disabled:opacity-50"
+            whileHover={!isLoading ? { scale: 1.02 } : undefined}
+            whileTap={!isLoading ? { scale: 0.98 } : undefined}
+          >
+            {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <ShieldCheck className="w-4 h-4" />}
+            Mark refunded
+          </motion.button>
+        </div>
+      </motion.div>
     </div>
   );
 }

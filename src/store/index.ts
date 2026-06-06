@@ -4,7 +4,7 @@ import { authApi } from './api/authApi';
 import { diagnosticsApi } from './api/diagnosticsApi';
 import { paymentsApi } from './api/paymentsApi';
 import { plansApi } from './api/plansApi';
-import { enterpriseApi } from './api/enterpriseApi';
+import { enterpriseApi, enterpriseCustomersApi } from './api/enterpriseApi';
 import authReducer from './slices/authSlice';
 import uiReducer from './slices/uiSlice';
 
@@ -15,6 +15,7 @@ export const store = configureStore({
     [paymentsApi.reducerPath]: paymentsApi.reducer,
     [plansApi.reducerPath]: plansApi.reducer,
     [enterpriseApi.reducerPath]: enterpriseApi.reducer,
+    [enterpriseCustomersApi.reducerPath]: enterpriseCustomersApi.reducer,
     auth: authReducer,
     ui: uiReducer,
   },
@@ -25,6 +26,7 @@ export const store = configureStore({
       paymentsApi.middleware,
       plansApi.middleware,
       enterpriseApi.middleware,
+      enterpriseCustomersApi.middleware,
     ),
   devTools: process.env.NODE_ENV !== 'production',
 });

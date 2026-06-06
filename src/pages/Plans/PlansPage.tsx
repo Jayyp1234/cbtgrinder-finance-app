@@ -7,13 +7,15 @@ import {
 import toast from 'react-hot-toast';
 import Card from '../../components/ui/Card';
 import {
-  useGetPlansBundleQuery, useUpdatePlanMutation, useCreatePlanMutation, useDeletePlanMutation,
+  useGetPlansBundleQuery, useUpdatePlanMutation, useCreatePlanMutation,
+  useDeletePlanWithRefundMutation, useGetRefundPreviewQuery,
   useUpdatePlanPriceMutation, useCreatePlanPriceMutation, useDeletePlanPriceMutation,
   type PlanRow, type PlanPriceRow,
 } from '../../store/api/plansApi';
 import {
   useListEnterprisePlansQuery, useUpdateEnterprisePlanMutation,
-  useCreateEnterprisePlanMutation, useArchiveEnterprisePlanMutation,
+  useCreateEnterprisePlanMutation,
+  useGetEnterpriseRefundPreviewQuery, useDeleteEnterprisePlanWithRefundMutation,
   type EnterprisePlan,
 } from '../../store/api/enterpriseApi';
 import {
@@ -69,9 +71,9 @@ function ConsumerPlansList() {
   const { data, isLoading } = useGetPlansBundleQuery();
   const [updatePlan] = useUpdatePlanMutation();
   const [createPlan] = useCreatePlanMutation();
-  const [deletePlan] = useDeletePlanMutation();
   const [editingId, setEditingId] = useState<number | null>(null);
   const [creating, setCreating] = useState(false);
+  const [deletingPlan, setDeletingPlan] = useState<PlanRow | null>(null);
 
   if (isLoading) {
     return <div className="p-10 flex justify-center"><Loader2 className="w-6 h-6 animate-spin text-teal-600" /></div>;
@@ -135,15 +137,7 @@ function ConsumerPlansList() {
                   toast.error(e?.data?.message || 'Update failed');
                 }
               }}
-              onDelete={async () => {
-                if (!window.confirm(`Delete plan "${plan.name}"? Users currently on this plan keep their access until period end.`)) return;
-                try {
-                  await deletePlan(plan.id).unwrap();
-                  toast.success('Plan deleted.');
-                } catch (e: any) {
-                  toast.error(e?.data?.message || 'Delete failed');
-                }
-              }}
+              onDelete={() => setDeletingPlan(plan)}
             />
           ))}
         </div>
@@ -163,6 +157,153 @@ function ConsumerPlansList() {
           }}
         />
       )}
+
+      {deletingPlan && (
+        <DeletePlanWithRefundModal
+          plan={deletingPlan}
+          onClose={() => setDeletingPlan(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+// ─── Delete-plan modal with refund preview ────────────────────────
+
+function DeletePlanWithRefundModal({
+  plan, onClose,
+}: { plan: PlanRow; onClose: () => void }) {
+  const { data: preview, isLoading: previewLoading } = useGetRefundPreviewQuery(plan.id);
+  const [deleteWithRefund, { isLoading: deleting }] = useDeletePlanWithRefundMutation();
+  const [reason, setReason] = useState('');
+
+  const submit = async () => {
+    if (!reason.trim()) {
+      toast.error('Reason is required (saved on every wallet credit + audit log)');
+      return;
+    }
+    if (!window.confirm(
+      `Permanently archive "${plan.name}" and refund ${preview?.users_with_refund ?? '?'} users a total of ${preview?.total_refund_display ?? '₦0'}? This cannot be undone.`
+    )) return;
+    try {
+      const r = await deleteWithRefund({ id: plan.id, reason: reason.trim() }).unwrap();
+      toast.success(r.message);
+      onClose();
+    } catch (e: any) {
+      toast.error(e?.data?.message || 'Delete failed');
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40" onClick={onClose}>
+      <motion.div
+        initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}
+        className="bg-white dark:bg-gray-800 rounded-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="bg-gradient-to-br from-rose-600 via-red-600 to-orange-600 text-white p-5">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h2 className="text-xl font-bold">Delete &ldquo;{plan.name}&rdquo;?</h2>
+              <p className="text-sm text-white/85 mt-1">
+                Every active subscriber will be credited their last payment to wallet, downgraded to the free plan, and notified via audit log.
+              </p>
+            </div>
+            <button onClick={onClose} className="p-1 rounded hover:bg-white/20">
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+        </div>
+
+        {/* Preview */}
+        <div className="p-5 space-y-5">
+          {previewLoading || !preview ? (
+            <div className="flex justify-center p-8"><Loader2 className="w-6 h-6 animate-spin text-rose-600" /></div>
+          ) : (
+            <>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="p-4 rounded-xl border border-amber-200 dark:border-amber-800 bg-amber-50/40 dark:bg-amber-900/10">
+                  <div className="text-xs font-bold uppercase tracking-wide text-amber-700 dark:text-amber-400">Users affected</div>
+                  <div className="text-2xl font-extrabold mt-1 text-gray-900 dark:text-white tabular-nums">{preview.users_count}</div>
+                  <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">{preview.users_with_refund} with a refund</div>
+                </div>
+                <div className="p-4 rounded-xl border border-emerald-200 dark:border-emerald-800 bg-emerald-50/40 dark:bg-emerald-900/10">
+                  <div className="text-xs font-bold uppercase tracking-wide text-emerald-700 dark:text-emerald-400">Total refund</div>
+                  <div className="text-2xl font-extrabold mt-1 text-gray-900 dark:text-white tabular-nums">{preview.total_refund_display}</div>
+                  <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">credited to user wallets</div>
+                </div>
+              </div>
+
+              {preview.sample.length > 0 && (
+                <div>
+                  <h4 className="text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">
+                    Preview (first {preview.sample.length} of {preview.users_count})
+                  </h4>
+                  <div className="border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden max-h-64 overflow-y-auto">
+                    <table className="w-full text-sm">
+                      <thead className="bg-gray-50 dark:bg-gray-700/50 sticky top-0">
+                        <tr className="text-left text-xs text-gray-600 dark:text-gray-300 uppercase tracking-wider">
+                          <th className="px-3 py-2">User</th>
+                          <th className="px-3 py-2 text-right">Refund</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
+                        {preview.sample.map((r) => (
+                          <tr key={r.subscription_id}>
+                            <td className="px-3 py-2">
+                              <div className="font-medium text-gray-900 dark:text-white text-xs">{r.name || `User #${r.user_id}`}</div>
+                              <div className="text-xs text-gray-500 dark:text-gray-400">{r.email}</div>
+                            </td>
+                            <td className="px-3 py-2 text-right font-bold tabular-nums text-gray-900 dark:text-white">
+                              {r.refund_kobo > 0 ? r.refund_display : <span className="text-gray-400">no payment</span>}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {preview.users_count === 0 && (
+                <div className="p-4 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-700/30 text-sm text-gray-700 dark:text-gray-300">
+                  No active subscribers — the plan can be safely archived with no refunds.
+                </div>
+              )}
+
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-wide text-gray-700 dark:text-gray-300 mb-1">
+                  Reason (required — saved with every wallet credit)
+                </label>
+                <textarea
+                  value={reason} onChange={(e) => setReason(e.target.value)} rows={2}
+                  placeholder="e.g. Plan retired in favor of unified Premium tier"
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+                />
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="p-5 border-t border-gray-200 dark:border-gray-700 flex gap-2 justify-end">
+          <button onClick={onClose}
+            className="px-4 py-2 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 font-semibold rounded-lg text-sm">
+            Cancel
+          </button>
+          <motion.button
+            onClick={submit}
+            disabled={deleting || previewLoading || !preview || !reason.trim()}
+            className="px-4 py-2 bg-gradient-to-r from-rose-500 to-red-600 text-white font-semibold rounded-lg text-sm flex items-center gap-2 shadow disabled:opacity-50"
+            whileHover={!deleting ? { scale: 1.02 } : undefined}
+            whileTap={!deleting ? { scale: 0.98 } : undefined}
+          >
+            {deleting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+            Archive plan &amp; refund {preview?.users_with_refund ?? 0} users
+          </motion.button>
+        </div>
+      </motion.div>
     </div>
   );
 }
@@ -701,9 +842,9 @@ function EnterprisePlansList() {
   const { data, isLoading } = useListEnterprisePlansQuery();
   const [updatePlan] = useUpdateEnterprisePlanMutation();
   const [createPlan] = useCreateEnterprisePlanMutation();
-  const [archivePlan] = useArchiveEnterprisePlanMutation();
   const [editingId, setEditingId] = useState<number | null>(null);
   const [creating, setCreating] = useState(false);
+  const [deletingPlan, setDeletingPlan] = useState<EnterprisePlan | null>(null);
 
   if (isLoading) {
     return <div className="p-10 flex justify-center"><Loader2 className="w-6 h-6 animate-spin text-purple-600" /></div>;
@@ -762,15 +903,7 @@ function EnterprisePlansList() {
                   toast.error(e?.data?.message || 'Update failed');
                 }
               }}
-              onArchive={async () => {
-                if (!window.confirm(`Archive "${plan.display_name}"? Existing subscriptions keep working — only new sign-ups are blocked.`)) return;
-                try {
-                  await archivePlan(plan.id).unwrap();
-                  toast.success('Plan archived.');
-                } catch (e: any) {
-                  toast.error(e?.data?.message || 'Archive failed');
-                }
-              }}
+              onArchive={() => setDeletingPlan(plan)}
             />
           ))}
         </div>
@@ -790,6 +923,212 @@ function EnterprisePlansList() {
           }}
         />
       )}
+
+      {deletingPlan && (
+        <DeleteEnterprisePlanWithRefundModal
+          plan={deletingPlan}
+          onClose={() => setDeletingPlan(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+// ─── Delete-enterprise-plan modal with refund preview ───────────────
+
+function DeleteEnterprisePlanWithRefundModal({
+  plan, onClose,
+}: { plan: EnterprisePlan; onClose: () => void }) {
+  const { data: preview, isLoading: previewLoading } = useGetEnterpriseRefundPreviewQuery(plan.id);
+  const [deleteWithRefund, { isLoading: deleting }] = useDeleteEnterprisePlanWithRefundMutation();
+  const [reason, setReason] = useState('');
+
+  const totalRefundNgn = (preview?.parent_refunds.total_ngn ?? 0) + (preview?.school_refunds_required.total_ngn ?? 0);
+  const totalVoidedNgn = preview?.open_invoices.total_ngn ?? 0;
+
+  const submit = async () => {
+    if (!reason.trim()) {
+      toast.error('Reason is required');
+      return;
+    }
+    const summary = preview
+      ? `${preview.schools_count} schools, ${preview.active_seats_count} seats, ${preview.open_invoices.count} invoices voided, ${preview.parent_refunds.count} parent refunds (${preview.parent_refunds.total_display}), ${preview.school_refunds_required.count} school bank-refunds owed (${preview.school_refunds_required.total_display})`
+      : 'this plan';
+    if (!window.confirm(`Permanently archive "${plan.display_name}"? Affects: ${summary}. This cannot be undone.`)) return;
+    try {
+      const r = await deleteWithRefund({ id: plan.id, reason: reason.trim() }).unwrap();
+      toast.success(r.message);
+      onClose();
+    } catch (e: any) {
+      toast.error(e?.data?.message || 'Delete failed');
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40" onClick={onClose}>
+      <motion.div
+        initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}
+        className="bg-white dark:bg-gray-800 rounded-2xl max-w-3xl w-full max-h-[90vh] overflow-y-auto shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="bg-gradient-to-br from-purple-600 via-pink-600 to-rose-600 text-white p-5">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h2 className="text-xl font-bold">Archive &ldquo;{plan.display_name}&rdquo;?</h2>
+              <p className="text-sm text-white/85 mt-1">
+                All schools on this plan will be cancelled. Seats stop billing. Parents get wallet refunds; schools get a manual-payout flag.
+              </p>
+            </div>
+            <button onClick={onClose} className="p-1 rounded hover:bg-white/20">
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+        </div>
+
+        {/* Preview body */}
+        <div className="p-5 space-y-5">
+          {previewLoading || !preview ? (
+            <div className="flex justify-center p-8"><Loader2 className="w-6 h-6 animate-spin text-purple-600" /></div>
+          ) : (
+            <>
+              {/* 4-up impact summary */}
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                <ImpactCell tone="purple" label="Schools" value={preview.schools_count} sub="will be cancelled" />
+                <ImpactCell tone="amber"  label="Seats"   value={preview.active_seats_count} sub="released" />
+                <ImpactCell tone="gray"   label="Open invoices" value={preview.open_invoices.count}
+                  sub={`${preview.open_invoices.total_display} voided`} />
+                <ImpactCell tone="emerald" label="Total to refund"
+                  value={`₦${totalRefundNgn.toLocaleString()}`}
+                  sub={`${(preview.parent_refunds.count + preview.school_refunds_required.count)} paid invoices`} />
+              </div>
+
+              {/* Refund breakdown */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="p-4 rounded-xl border border-emerald-200 dark:border-emerald-800 bg-emerald-50/40 dark:bg-emerald-900/10">
+                  <div className="text-xs font-bold uppercase tracking-wide text-emerald-700 dark:text-emerald-400">
+                    👨‍👩 Parent wallet refunds (automatic)
+                  </div>
+                  <div className="text-2xl font-extrabold mt-1 text-gray-900 dark:text-white tabular-nums">
+                    {preview.parent_refunds.total_display}
+                  </div>
+                  <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    {preview.parent_refunds.count} invoice{preview.parent_refunds.count === 1 ? '' : 's'} — credited to parent wallets
+                  </div>
+                </div>
+                <div className="p-4 rounded-xl border border-amber-200 dark:border-amber-800 bg-amber-50/40 dark:bg-amber-900/10">
+                  <div className="text-xs font-bold uppercase tracking-wide text-amber-700 dark:text-amber-400">
+                    🏫 School bank refunds (manual)
+                  </div>
+                  <div className="text-2xl font-extrabold mt-1 text-gray-900 dark:text-white tabular-nums">
+                    {preview.school_refunds_required.total_display}
+                  </div>
+                  <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    {preview.school_refunds_required.count} invoice{preview.school_refunds_required.count === 1 ? '' : 's'} — flagged for BudPay/Paystack payout
+                  </div>
+                </div>
+              </div>
+
+              {/* Sample list */}
+              {preview.sample.length > 0 && (
+                <div>
+                  <h4 className="text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">
+                    Affected schools (first {preview.sample.length} of {preview.schools_count})
+                  </h4>
+                  <div className="border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden max-h-56 overflow-y-auto">
+                    <table className="w-full text-sm">
+                      <thead className="bg-gray-50 dark:bg-gray-700/50 sticky top-0">
+                        <tr className="text-left text-xs text-gray-600 dark:text-gray-300 uppercase tracking-wider">
+                          <th className="px-3 py-2">School</th>
+                          <th className="px-3 py-2">Status</th>
+                          <th className="px-3 py-2 text-right">Active seats</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
+                        {preview.sample.map((r) => (
+                          <tr key={r.subscription_id}>
+                            <td className="px-3 py-2">
+                              <div className="font-medium text-gray-900 dark:text-white text-xs">{r.enterprise_name || `#${r.enterprise_id}`}</div>
+                              <div className="text-xs text-gray-500 dark:text-gray-400">{r.enterprise_email}</div>
+                            </td>
+                            <td className="px-3 py-2">
+                              <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300">
+                                {r.status}
+                              </span>
+                            </td>
+                            <td className="px-3 py-2 text-right font-bold tabular-nums text-gray-900 dark:text-white">{r.active_seats}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {preview.schools_count === 0 && totalVoidedNgn === 0 && totalRefundNgn === 0 && (
+                <div className="p-4 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-700/30 text-sm text-gray-700 dark:text-gray-300">
+                  No active subscriptions, seats, or invoices on this plan — safe to archive with no side effects.
+                </div>
+              )}
+
+              {/* Warning if there are school refunds */}
+              {preview.school_refunds_required.count > 0 && (
+                <div className="p-3 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 text-xs text-amber-800 dark:text-amber-300">
+                  <strong>Action required:</strong> {preview.school_refunds_required.count} school-billed invoices totalling {preview.school_refunds_required.total_display} cannot be auto-refunded (schools don't have in-app wallets). After archiving, search the Invoices page by status &ldquo;refunded&rdquo; — each will have a metadata note <code>bank_refund_required: true</code>. Process those manually via the BudPay/Paystack dashboard.
+                </div>
+              )}
+
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-wide text-gray-700 dark:text-gray-300 mb-1">
+                  Reason (required — written into every wallet credit + invoice event)
+                </label>
+                <textarea
+                  value={reason} onChange={(e) => setReason(e.target.value)} rows={2}
+                  placeholder="e.g. Consolidating plans — Institutional replaces this tier"
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+                />
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="p-5 border-t border-gray-200 dark:border-gray-700 flex gap-2 justify-end">
+          <button onClick={onClose}
+            className="px-4 py-2 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 font-semibold rounded-lg text-sm">
+            Cancel
+          </button>
+          <motion.button
+            onClick={submit}
+            disabled={deleting || previewLoading || !preview || !reason.trim()}
+            className="px-4 py-2 bg-gradient-to-r from-purple-500 to-pink-600 text-white font-semibold rounded-lg text-sm flex items-center gap-2 shadow disabled:opacity-50"
+            whileHover={!deleting ? { scale: 1.02 } : undefined}
+            whileTap={!deleting ? { scale: 0.98 } : undefined}
+          >
+            {deleting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+            Archive plan
+          </motion.button>
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
+function ImpactCell({
+  tone, label, value, sub,
+}: { tone: 'purple' | 'amber' | 'gray' | 'emerald'; label: string; value: React.ReactNode; sub: string }) {
+  const tones: Record<string, { wrap: string; label: string }> = {
+    purple:  { wrap: 'border-purple-200 dark:border-purple-800 bg-purple-50/40 dark:bg-purple-900/10',     label: 'text-purple-700 dark:text-purple-400' },
+    amber:   { wrap: 'border-amber-200 dark:border-amber-800 bg-amber-50/40 dark:bg-amber-900/10',         label: 'text-amber-700 dark:text-amber-400' },
+    gray:    { wrap: 'border-gray-200 dark:border-gray-700 bg-gray-50/40 dark:bg-gray-900/10',             label: 'text-gray-700 dark:text-gray-300' },
+    emerald: { wrap: 'border-emerald-200 dark:border-emerald-800 bg-emerald-50/40 dark:bg-emerald-900/10', label: 'text-emerald-700 dark:text-emerald-400' },
+  };
+  const t = tones[tone];
+  return (
+    <div className={`p-3 rounded-xl border ${t.wrap}`}>
+      <div className={`text-[10px] font-bold uppercase tracking-wide ${t.label}`}>{label}</div>
+      <div className="text-xl font-extrabold mt-0.5 text-gray-900 dark:text-white tabular-nums">{value}</div>
+      <div className="text-[10px] text-gray-500 dark:text-gray-400 mt-0.5">{sub}</div>
     </div>
   );
 }

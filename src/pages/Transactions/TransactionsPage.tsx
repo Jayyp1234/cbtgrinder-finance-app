@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { motion } from 'framer-motion';
-import { Search, Loader2, ExternalLink, Filter, X, RotateCcw, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Search, Loader2, ExternalLink, Filter, X, RotateCcw, ChevronLeft, ChevronRight, Download } from 'lucide-react';
 import toast from 'react-hot-toast';
 import Card from '../../components/ui/Card';
+import { downloadCsv, csvTimestamp } from '../../utils/csv';
 import {
   useListTransactionsQuery,
   useGetTransactionQuery,
@@ -90,7 +91,42 @@ export default function TransactionsPage() {
             <h2 className="text-base font-bold text-gray-900 dark:text-white">All transactions</h2>
             {isFetching && <Loader2 className="w-4 h-4 animate-spin text-emerald-600" />}
           </div>
-          <span className="text-xs text-gray-500 dark:text-gray-400">{data?.total ?? 0} total</span>
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-gray-500 dark:text-gray-400">{data?.total ?? 0} total</span>
+            <motion.button
+              onClick={() => {
+                const rows = data?.transactions ?? [];
+                if (rows.length === 0) { toast.error('No transactions in current view to export.'); return; }
+                downloadCsv(
+                  `transactions-${csvTimestamp()}.csv`,
+                  [
+                    { header: 'id',             accessor: (r) => r.id },
+                    { header: 'internal_ref',   accessor: (r) => r.internal_ref },
+                    { header: 'provider_ref',   accessor: (r) => r.provider_ref ?? '' },
+                    { header: 'user_id',        accessor: (r) => r.user?.id ?? '' },
+                    { header: 'user_email',     accessor: (r) => r.user?.email ?? '' },
+                    { header: 'user_name',      accessor: (r) => r.user?.name ?? '' },
+                    { header: 'purpose',        accessor: (r) => r.purpose },
+                    { header: 'status',         accessor: (r) => r.status },
+                    { header: 'amount_kobo',    accessor: (r) => r.amount_kobo },
+                    { header: 'amount_ngn',     accessor: (r) => r.amount_ngn },
+                    { header: 'plan_name',      accessor: (r) => r.plan_name ?? '' },
+                    { header: 'xp_pack_name',   accessor: (r) => r.xp_pack_name ?? '' },
+                    { header: 'failure_reason', accessor: (r) => r.failure_reason ?? '' },
+                    { header: 'initialized_at', accessor: (r) => r.initialized_at ?? '' },
+                    { header: 'verified_at',    accessor: (r) => r.verified_at ?? '' },
+                    { header: 'created_at',     accessor: (r) => r.created_at ?? '' },
+                  ],
+                  rows,
+                );
+                toast.success(`Exported ${rows.length} transactions.`);
+              }}
+              className="px-3 py-1.5 bg-gradient-to-r from-emerald-500 to-teal-600 text-white font-semibold rounded-lg text-xs flex items-center gap-1.5 shadow"
+              whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}
+            >
+              <Download className="w-3.5 h-3.5" /> Export CSV
+            </motion.button>
+          </div>
         </div>
 
         {isLoading ? (

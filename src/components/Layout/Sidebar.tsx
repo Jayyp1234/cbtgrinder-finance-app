@@ -38,6 +38,7 @@ const NAV: Item[] = [
   { id: '/transactions',  label: 'Transactions',        icon: Receipt,         color: 'text-blue-600',    path: '/transactions' },
   { id: '/webhooks',      label: 'Webhook Events',      icon: Webhook,         color: 'text-indigo-600',  path: '/webhooks' },
   { id: '/wallets',       label: 'Wallet Operations',   icon: Wallet,          color: 'text-amber-600',   path: '/wallets' },
+  { id: '/customers',     label: 'Enterprise Customers', icon: Building2,      color: 'text-purple-600',  path: '/customers' },
   { id: '/enterprise',    label: 'Enterprise Billing',  icon: Building2,       color: 'text-purple-600',  path: '/enterprise' },
   { id: '/plans',         label: 'Plans & Pricing',     icon: CreditCard,      color: 'text-teal-600',    path: '/plans' },
   { id: '/features',      label: 'Feature Catalog',     icon: ListChecks,      color: 'text-indigo-600',  path: '/features' },
